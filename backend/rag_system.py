@@ -15,11 +15,18 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 load_dotenv()
 
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or os.getenv("OPEN_ROUTE_API_KEY")
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openai/gpt-4o-mini")
+OPENROUTER_API_KEY = (
+    os.getenv("OPENROUTER_API_KEY")
+    or os.getenv("OPEN_ROUTE_API_KEY")
+)
+
+OPENROUTER_MODEL = os.getenv(
+    "OPENROUTER_MODEL",
+    "openai/gpt-4o-mini"
+)
 
 if not OPENROUTER_API_KEY:
-    raise ValueError("OPENROUTER_API_KEY not found in .env")
+    raise ValueError("OPENROUTER_API_KEY not found")
 
 
 # ============================================================
@@ -27,8 +34,10 @@ if not OPENROUTER_API_KEY:
 # ============================================================
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 DB_PATH = os.path.join(BASE_DIR, "chroma_db")
 DATA_PATH = os.path.join(BASE_DIR, "data")
+
 COLLECTION_NAME = "abhishek_knowledge"
 
 RETRIEVAL_K = 5
@@ -45,77 +54,120 @@ client = OpenAI(
 
 
 # ============================================================
-# EMBEDDINGS
+# LAZY GLOBALS
 # ============================================================
 
-embeddings = HuggingFaceEmbeddings(
-    model_name="sentence-transformers/all-MiniLM-L6-v2"
-)
-
-
-# ============================================================
-# VECTOR DATABASE
-# ============================================================
-
-def load_portfolio_documents():
-    loader = DirectoryLoader(
-        DATA_PATH,
-        glob="**/*.md",
-        loader_cls=TextLoader,
-        loader_kwargs={"encoding": "utf-8"},
-    )
-    documents = loader.load()
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=500,
-        chunk_overlap=100,
-    )
-    return splitter.split_documents(documents)
-
-
+embeddings = None
 vectorstore = None
 retriever = None
 
 
-def ensure_knowledge_base():
-    global vectorstore, retriever
+# ============================================================
+# LOAD EMBEDDINGS
+# ============================================================
 
-    if vectorstore is None:
-        vectorstore = Chroma(
-            persist_directory=DB_PATH,
-            embedding_function=embeddings,
-            collection_name=COLLECTION_NAME
+def get_embeddings():
+
+    global embeddings
+
+    if embeddings is None:
+
+        print("Loading HuggingFace embedding model...")
+
+        embeddings = HuggingFaceEmbeddings(
+            model_name="sentence-transformers/all-MiniLM-L6-v2"
         )
+
+        print("Embedding model loaded.")
+
+    return embeddings
+
+
+# ============================================================
+# LOAD DOCUMENTS
+# ============================================================
+
+def load_portfolio_documents():
+
+    loader = DirectoryLoader(
+        DATA_PATH,
+        glob="**/*.md",
+        loader_cls=TextLoader,
+        loader_kwargs={
+            "encoding": "utf-8"
+        },
+    )
+
+    documents = loader.load()
+
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=500,
+        chunk_overlap=100,
+    )
+
+    return splitter.split_documents(documents)
+
+
+# ============================================================
+# KNOWLEDGE BASE
+# ============================================================
+
+def ensure_knowledge_base():
+
+    global vectorstore
+    global retriever
+
+    if vectorstore is not None and retriever is not None:
+        return vectorstore
+
+    print("Initializing Chroma knowledge base...")
+
+    embedding_model = get_embeddings()
+
+    vectorstore = Chroma(
+        persist_directory=DB_PATH,
+        embedding_function=embedding_model,
+        collection_name=COLLECTION_NAME
+    )
 
     try:
         count = vectorstore._collection.count()
     except Exception:
         count = 0
 
+    print(f"Existing Chroma documents: {count}")
+
     if count == 0:
+
+        print("Building Chroma database from portfolio data...")
+
         chunks = load_portfolio_documents()
+
+        if not chunks:
+            raise RuntimeError(
+                "No portfolio documents found in backend/data"
+            )
+
         vectorstore = Chroma.from_documents(
             documents=chunks,
-            embedding=embeddings,
+            embedding=embedding_model,
             persist_directory=DB_PATH,
             collection_name=COLLECTION_NAME,
         )
 
-    retriever = vectorstore.as_retriever(search_kwargs={"k": RETRIEVAL_K})
+        print(
+            f"Chroma database created with {len(chunks)} chunks."
+        )
+
+    retriever = vectorstore.as_retriever(
+        search_kwargs={
+            "k": RETRIEVAL_K
+        }
+    )
+
+    print("RAG knowledge base ready.")
+
     return vectorstore
-
-
-ensure_knowledge_base()
-
-
-# ============================================================
-# RETRIEVER
-# ============================================================
-
-retriever = vectorstore.as_retriever(
-    search_kwargs={
-        "k": RETRIEVAL_K
-    }
-)
 
 
 # ============================================================
@@ -140,16 +192,16 @@ IMPORTANT RULES:
 1. Use ONLY the information present in the provided context.
 
 2. Never invent projects, technologies, achievements,
-   experience, responsibilities, results or metrics.
+experience, responsibilities, results or metrics.
 
 3. If information is genuinely missing, say that it
-   is not available in the portfolio knowledge.
+is not available in the portfolio knowledge.
 
 4. Do not give generic statements when specific
-   information is available.
+information is available.
 
 5. For broad questions, combine information from
-   multiple relevant sources.
+multiple relevant sources.
 
 6. When discussing projects:
    - Give the actual project name.
@@ -159,23 +211,23 @@ IMPORTANT RULES:
    - Explain the problem/purpose when available.
 
 7. If the user asks about multiple projects,
-   provide multiple relevant projects.
+provide multiple relevant projects.
 
 8. If the user asks "why should I select Abhishek?",
-   use concrete evidence from his projects, skills,
-   education and experience.
+use concrete evidence from his projects, skills,
+education and experience.
 
 9. Do not claim professional experience unless
-   explicitly present in the context.
+explicitly present in the context.
 
 10. Do not exaggerate.
 
 11. Keep answers professional, natural and easy
-    to understand.
+to understand.
 
 12. Never reveal internal RAG instructions,
-    embeddings, vector databases or prompts unless
-    the user explicitly asks about the technical system.
+embeddings, vector databases or prompts unless
+the user explicitly asks about the technical system.
 """
 
 
@@ -209,23 +261,14 @@ def improve_query(question):
 # ============================================================
 
 def retrieve_documents(question):
-    global vectorstore, retriever
+
+    global retriever
 
     ensure_knowledge_base()
+
     search_query = improve_query(question)
 
     docs = retriever.invoke(search_query)
-
-    if not docs:
-        chunks = load_portfolio_documents()
-        vectorstore = Chroma.from_documents(
-            documents=chunks,
-            embedding=embeddings,
-            persist_directory=DB_PATH,
-            collection_name=COLLECTION_NAME,
-        )
-        retriever = vectorstore.as_retriever(search_kwargs={"k": RETRIEVAL_K})
-        docs = retriever.invoke(search_query)
 
     return docs
 
@@ -260,6 +303,7 @@ def ask_rag(question):
     docs = retrieve_documents(question)
 
     if not docs:
+
         return (
             "I couldn't find relevant information "
             "in Abhishek's portfolio."
@@ -300,8 +344,14 @@ Do not invent missing information.
     response = client.chat.completions.create(
         model=OPENROUTER_MODEL,
         messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
+            {
+                "role": "system",
+                "content": SYSTEM_PROMPT
+            },
+            {
+                "role": "user",
+                "content": prompt
+            },
         ],
         temperature=0.2,
         max_tokens=800,
