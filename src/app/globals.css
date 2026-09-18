@@ -1,0 +1,134 @@
+@import "tailwindcss";
+
+:root {
+  --background: #fafdfc;
+  --foreground: #0b1a16; /* deep teal-slate */
+  --card-bg: rgba(255, 255, 255, 0.65);
+  --card-border: rgba(204, 224, 218, 0.7);
+  --primary: #059669; /* emerald-600 */
+  --primary-glow: rgba(5, 150, 105, 0.15);
+  --primary-hover: #047857;
+  --accent: #d97706; /* amber-600 */
+  --accent-glow: rgba(217, 119, 6, 0.15);
+  --muted: #4b6b60; /* soft green-slate */
+  --nav-bg: rgba(250, 253, 252, 0.75);
+  --selection-bg: rgba(5, 150, 105, 0.2);
+  --grid-color: rgba(5, 150, 105, 0.03);
+}
+
+.dark {
+  --background: #010c0a; /* very dark forest-teal */
+  --foreground: #ecfdf5; /* emerald-50 */
+  --card-bg: rgba(6, 20, 17, 0.55); /* dark green-slate */
+  --card-border: rgba(16, 44, 38, 0.6);
+  --primary: #10b981; /* emerald-500 */
+  --primary-glow: rgba(16, 185, 129, 0.25);
+  --primary-hover: #059669;
+  --accent: #f59e0b; /* amber-500 */
+  --accent-glow: rgba(245, 158, 11, 0.25);
+  --muted: #8ba29a; /* soft forest-gray */
+  --nav-bg: rgba(1, 12, 10, 0.75);
+  --selection-bg: rgba(16, 185, 129, 0.3);
+  --grid-color: rgba(16, 185, 129, 0.02);
+}
+
+@theme {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card-bg: var(--card-bg);
+  --color-card-border: var(--card-border);
+  --color-primary: var(--primary);
+  --color-primary-glow: var(--primary-glow);
+  --color-primary-hover: var(--primary-hover);
+  --color-accent: var(--accent);
+  --color-accent-glow: var(--accent-glow);
+  --color-muted: var(--muted);
+  --color-nav-bg: var(--nav-bg);
+  --color-grid-color: var(--grid-color);
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    overflow-x: hidden;
+  }
+  
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    transition: background-color 0.3s ease, color 0.3s ease;
+  }
+
+  ::selection {
+    background-color: var(--selection-bg);
+  }
+
+  /* Custom Premium Scrollbar */
+  ::-webkit-scrollbar {
+    width: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: var(--background);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--card-border);
+    border-radius: 5px;
+    border: 2px solid var(--background);
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--muted);
+  }
+}
+
+/* Glassmorphism Helper Class */
+.glass {
+  background: var(--card-bg);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--card-border);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.05);
+}
+
+.dark .glass {
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+}
+
+/* Background grid pattern */
+.grid-bg {
+  background-size: 40px 40px;
+  background-image: 
+    linear-gradient(to right, var(--grid-color) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--grid-color) 1px, transparent 1px);
+}
+
+/* Floating animation */
+@keyframes float {
+  0% { transform: translateY(0px); }
+  50% { transform: translateY(-10px); }
+  100% { transform: translateY(0px); }
+}
+
+.animate-float {
+  animation: float 4s ease-in-out infinite;
+}
+
+@keyframes pulse-slow {
+  0%, 100% { opacity: 0.2; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(1.05); }
+}
+
+.animate-pulse-slow {
+  animation: pulse-slow 8s ease-in-out infinite;
+}
+
+/* Terminal Input Typing Caret */
+.caret {
+  border-right: 2px solid var(--primary);
+  animation: blink-caret 0.75s step-end infinite;
+}
+
+@keyframes blink-caret {
+  from, to { border-color: transparent }
+  50% { border-color: var(--primary); }
+}
