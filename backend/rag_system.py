@@ -1,12 +1,12 @@
 import os
-
 from dotenv import load_dotenv
 from openai import OpenAI
 
 from langchain_community.document_loaders import DirectoryLoader, TextLoader
-from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_chroma import Chroma
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
 
 # ============================================================
@@ -34,11 +34,7 @@ if not OPENROUTER_API_KEY:
 # ============================================================
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-DB_PATH = os.path.join(BASE_DIR, "chroma_db")
 DATA_PATH = os.path.join(BASE_DIR, "data")
-
-COLLECTION_NAME = "abhishek_knowledge"
 
 RETRIEVAL_K = 5
 
@@ -54,40 +50,22 @@ client = OpenAI(
 
 
 # ============================================================
-# LAZY GLOBALS
+# GLOBAL KNOWLEDGE BASE
 # ============================================================
 
-embeddings = None
-vectorstore = None
-retriever = None
-
-
-# ============================================================
-# LOAD EMBEDDINGS
-# ============================================================
-
-def get_embeddings():
-
-    global embeddings
-
-    if embeddings is None:
-
-        print("Loading HuggingFace embedding model...")
-
-        embeddings = HuggingFaceEmbeddings(
-            model_name="sentence-transformers/all-MiniLM-L6-v2"
-        )
-
-        print("Embedding model loaded.")
-
-    return embeddings
+documents = None
+document_texts = None
+vectorizer = None
+document_vectors = None
 
 
 # ============================================================
-# LOAD DOCUMENTS
+# LOAD PORTFOLIO DOCUMENTS
 # ============================================================
 
 def load_portfolio_documents():
+
+    print("Loading portfolio documents...")
 
     loader = DirectoryLoader(
         DATA_PATH,
@@ -98,76 +76,69 @@ def load_portfolio_documents():
         },
     )
 
-    documents = loader.load()
+    loaded_documents = loader.load()
+
+    if not loaded_documents:
+        raise RuntimeError(
+            "No portfolio documents found in backend/data"
+        )
 
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=500,
+        chunk_size=700,
         chunk_overlap=100,
     )
 
-    return splitter.split_documents(documents)
+    chunks = splitter.split_documents(
+        loaded_documents
+    )
+
+    print(
+        f"Loaded {len(loaded_documents)} files "
+        f"and created {len(chunks)} chunks."
+    )
+
+    return chunks
 
 
 # ============================================================
-# KNOWLEDGE BASE
+# BUILD TF-IDF INDEX
 # ============================================================
 
 def ensure_knowledge_base():
 
-    global vectorstore
-    global retriever
+    global documents
+    global document_texts
+    global vectorizer
+    global document_vectors
 
-    if vectorstore is not None and retriever is not None:
-        return vectorstore
+    if (
+        documents is not None
+        and vectorizer is not None
+        and document_vectors is not None
+    ):
+        return
 
-    print("Initializing Chroma knowledge base...")
+    print("Building lightweight TF-IDF knowledge base...")
 
-    embedding_model = get_embeddings()
+    documents = load_portfolio_documents()
 
-    vectorstore = Chroma(
-        persist_directory=DB_PATH,
-        embedding_function=embedding_model,
-        collection_name=COLLECTION_NAME
+    document_texts = [
+        doc.page_content
+        for doc in documents
+    ]
+
+    vectorizer = TfidfVectorizer(
+        lowercase=True,
+        stop_words="english",
+        ngram_range=(1, 2),
+        max_features=10000,
     )
 
-    try:
-        count = vectorstore._collection.count()
-    except Exception:
-        count = 0
-
-    print(f"Existing Chroma documents: {count}")
-
-    if count == 0:
-
-        print("Building Chroma database from portfolio data...")
-
-        chunks = load_portfolio_documents()
-
-        if not chunks:
-            raise RuntimeError(
-                "No portfolio documents found in backend/data"
-            )
-
-        vectorstore = Chroma.from_documents(
-            documents=chunks,
-            embedding=embedding_model,
-            persist_directory=DB_PATH,
-            collection_name=COLLECTION_NAME,
-        )
-
-        print(
-            f"Chroma database created with {len(chunks)} chunks."
-        )
-
-    retriever = vectorstore.as_retriever(
-        search_kwargs={
-            "k": RETRIEVAL_K
-        }
+    document_vectors = vectorizer.fit_transform(
+        document_texts
     )
 
-    print("RAG knowledge base ready.")
-
-    return vectorstore
+    print("TF-IDF knowledge base ready.")
 
 
 # ============================================================
@@ -241,7 +212,7 @@ def improve_query(question):
 
     if "project" in q or "projects" in q:
 
-        return """
+        return f"""
         Abhishek Tiwari projects portfolio.
         Machine learning projects.
         Artificial intelligence projects.
@@ -251,26 +222,53 @@ def improve_query(question):
         AutoML projects.
         Project names, descriptions, technologies,
         features and purpose.
+
+        User question:
+        {question}
         """
 
     return question
 
 
 # ============================================================
-# RETRIEVE
+# RETRIEVE DOCUMENTS
 # ============================================================
 
 def retrieve_documents(question):
-
-    global retriever
 
     ensure_knowledge_base()
 
     search_query = improve_query(question)
 
-    docs = retriever.invoke(search_query)
+    query_vector = vectorizer.transform(
+        [search_query]
+    )
 
-    return docs
+    similarities = cosine_similarity(
+        query_vector,
+        document_vectors
+    )[0]
+
+    ranked_indices = similarities.argsort()[::-1]
+
+    selected_documents = []
+
+    for index in ranked_indices[:RETRIEVAL_K]:
+
+        # Ignore completely unrelated chunks
+        if similarities[index] <= 0:
+            continue
+
+        selected_documents.append(
+            documents[index]
+        )
+
+    print(
+        f"Retrieved {len(selected_documents)} "
+        f"relevant documents."
+    )
+
+    return selected_documents
 
 
 # ============================================================
@@ -312,8 +310,6 @@ def ask_rag(question):
     context = build_context(docs)
 
     prompt = f"""
-{SYSTEM_PROMPT}
-
 ================ CONTEXT ================
 
 {context}
@@ -324,13 +320,11 @@ def ask_rag(question):
 
 ================ ANSWER ================
 
-Answer the question directly using the provided
-knowledge.
-
-If multiple relevant pieces of information exist,
-combine them into one useful answer.
+Answer the question directly using ONLY the
+provided portfolio context.
 
 Format the answer for a portfolio visitor:
+
 - Start with a direct one-sentence answer.
 - Use short paragraphs.
 - Use simple bullet points when listing projects,
